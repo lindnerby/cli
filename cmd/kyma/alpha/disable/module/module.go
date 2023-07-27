@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/kyma-project/cli/internal/cli/alpha/module"
-	"github.com/kyma-project/lifecycle-manager/api/v1beta1"
+	"github.com/kyma-project/lifecycle-manager/api/v1beta2"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -121,7 +121,7 @@ func (cmd *command) run(ctx context.Context, l *zap.SugaredLogger, moduleName st
 
 	kyma := types.NamespacedName{Name: cmd.opts.KymaName, Namespace: cmd.opts.Namespace}
 	moduleInteractor := module.NewInteractor(l, cmd.K8s, kyma, cmd.opts.Timeout, cmd.opts.Force)
-	modules, err := moduleInteractor.Get(ctx)
+	modules, _, err := moduleInteractor.Get(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get modules: %w", err)
 	}
@@ -139,10 +139,8 @@ func (cmd *command) run(ctx context.Context, l *zap.SugaredLogger, moduleName st
 
 	if cmd.opts.Wait {
 		waitStep := cmd.NewStep("Waiting for Kyma to become Ready")
-		if err = moduleInteractor.WaitUntilReady(
-			ctx,
-		); err != nil {
-			waitStep.Failuref("Kyma did not get Ready")
+		if err = moduleInteractor.WaitUntilReady(ctx); err != nil {
+			waitStep.Failuref("kyma did not get ready: %s", err)
 			return err
 		}
 		waitStep.Successf("Kyma is Ready")
@@ -151,13 +149,13 @@ func (cmd *command) run(ctx context.Context, l *zap.SugaredLogger, moduleName st
 	return nil
 }
 
-func disableModule(modules []v1beta1.Module, name, channel string) ([]v1beta1.Module, error) {
+func disableModule(modules []v1beta2.Module, name, channel string) ([]v1beta2.Module, error) {
 	for i, mod := range modules {
 		if mod.Name != name {
 			continue
 		}
 		if channel != "" {
-			if mod.Channel != channel {
+			if mod.Channel != "" && mod.Channel != channel {
 				continue
 			}
 		}

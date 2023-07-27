@@ -10,6 +10,11 @@ import (
 	"sigs.k8s.io/kustomize/kyaml/kio"
 )
 
+const (
+	targetControlPlane = "control-plane"
+	targetRemote       = "remote"
+)
+
 // Options defines available options for the command
 type Options struct {
 	*cli.Options
@@ -22,9 +27,10 @@ type Options struct {
 	Namespace           string
 	Channel             string
 	KymaCR              string
+	Target              string
 	Modules             []string
 	Kustomizations      []string
-	Templates           []string
+	AdditionalTemplates []string
 	Timeout             time.Duration
 	Filters             []kio.Filter
 }
@@ -44,7 +50,7 @@ func (o *Options) validateFlags() error {
 		return err
 	}
 
-	return nil
+	return o.validateTarget()
 }
 
 func (o *Options) validateTimeout() error {
@@ -69,4 +75,12 @@ func (o *Options) validateFilters() error {
 	filters = append(filters, modifier)
 	o.Filters = filters
 	return nil
+}
+
+func (o *Options) validateTarget() error {
+	if o.Target == targetControlPlane || o.Target == targetRemote {
+		return nil
+	}
+
+	return fmt.Errorf("target must be either '%s' or '%s'", targetControlPlane, targetRemote)
 }

@@ -6,20 +6,23 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/kyma-project/cli/internal/cli"
 	"github.com/kyma-project/cli/internal/kube"
 	"github.com/kyma-project/hydroform/function/pkg/client"
 	"github.com/kyma-project/hydroform/function/pkg/manager"
 	"github.com/kyma-project/hydroform/function/pkg/operator"
+	operator_types "github.com/kyma-project/hydroform/function/pkg/operator/types"
 	resources "github.com/kyma-project/hydroform/function/pkg/resources/unstructured"
 	"github.com/kyma-project/hydroform/function/pkg/workspace"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 )
 
 type command struct {
@@ -80,6 +83,10 @@ func (c *command) Run() error {
 		return errors.Wrap(err, "Could not decode the configuration file")
 	}
 
+	if configuration.SchemaVersion == "" {
+		configuration.SchemaVersion = workspace.SchemaVersionDefault
+	}
+
 	if configuration.Source.SourcePath == "" {
 		configuration.Source.SourcePath = filepath.Dir(c.opts.Filename)
 	}
@@ -98,31 +105,45 @@ func (c *command) Run() error {
 		return err
 	}
 
-	subscriptions, err := resources.NewSubscriptions(configuration)
-	if err != nil {
-		step.Failure()
-		return err
+	operators := []operator.Operator{}
+
+	if len(configuration.Subscriptions) != 0 {
+
+		subscriptionGVR := operator.SubscriptionGVR(configuration.SchemaVersion)
+		err := isDependencyInstalled(client, subscriptionGVR)
+		if err != nil {
+			step.Failure()
+			return err
+		}
+
+		subscriptions, err := resources.NewSubscriptions(configuration)
+		if err != nil {
+			step.Failure()
+			return err
+		}
+		operators = append(operators, operator.NewSubscriptionOperator(client.Resource(subscriptionGVR).Namespace(configuration.Namespace),
+			configuration.Name, configuration.Namespace, subscriptions...))
 	}
 
-	kymaAddress, err := c.kymaHostAddress()
-	if err != nil {
-		step.LogErrorf("%s\n%s", err, "Check if your cluster is available and has Kyma installed.")
-	}
+	if len(configuration.APIRules) != 0 {
 
-	apiRules, err := resources.NewAPIRule(configuration, kymaAddress)
-	if err != nil {
-		step.Failure()
-		return err
+		err := isDependencyInstalled(client, operator_types.GVRApiRule)
+		if err != nil {
+			step.Failure()
+			return err
+		}
+		apiRules, err := resources.NewAPIRule(configuration)
+		if err != nil {
+			step.Failure()
+			return err
+		}
+		operators = append(operators, operator.NewAPIRuleOperator(client.Resource(operator_types.GVRApiRule).Namespace(configuration.Namespace),
+			configuration.Name, apiRules...))
 	}
 
 	mgr.AddParent(
-		operator.NewGenericOperator(client.Resource(operator.GVRFunction).Namespace(configuration.Namespace), function),
-		[]operator.Operator{
-			operator.NewSubscriptionOperator(client.Resource(operator.GVRSubscription).Namespace(configuration.Namespace),
-				configuration.Name, configuration.Namespace, subscriptions...),
-			operator.NewAPIRuleOperator(client.Resource(operator.GVRApiRule).Namespace(configuration.Namespace),
-				configuration.Name, apiRules...),
-		},
+		operator.NewGenericOperator(client.Resource(operator_types.GVRFunction).Namespace(configuration.Namespace), function),
+		operators,
 	)
 
 	options := manager.Options{
@@ -142,21 +163,6 @@ func (c *command) Run() error {
 	step.Successf("Configuration loaded")
 
 	return mgr.Do(ctx, options)
-}
-
-func (c *command) kymaHostAddress() (string, error) {
-	var url string
-	vs, err := c.K8s.Istio().NetworkingV1alpha3().Gateways("kyma-system").Get(context.Background(), "kyma-gateway", v1.GetOptions{})
-	switch {
-	case err != nil:
-		err = errors.Wrapf(err, "Unable to read the Kyma host URL due to error")
-	case vs != nil && len(vs.Spec.GetServers()) > 0 && len(vs.Spec.Servers[0].Hosts) > 0:
-		url = strings.TrimPrefix(vs.Spec.Servers[0].Hosts[0], "*.")
-	default:
-		err = errors.New("kyma host URL could not be obtained")
-	}
-
-	return url, err
 }
 
 const (
@@ -179,6 +185,24 @@ func chooseOnError(onErr value) manager.OnError {
 
 	}
 	return manager.PurgeOnError
+}
+
+func isDependencyInstalled(client dynamic.Interface, dependencyCRD schema.GroupVersionResource) error {
+	crdGVR := schema.GroupVersionResource{
+		Group:    "apiextensions.k8s.io",
+		Version:  "v1",
+		Resource: "customresourcedefinitions",
+	}
+
+	_, err := client.Resource(crdGVR).Get(context.Background(), fmt.Sprintf("%s.%s", dependencyCRD.Resource, dependencyCRD.Group), metav1.GetOptions{})
+
+	if err != nil {
+		if k8sErrors.IsNotFound(err) {
+			return errors.Errorf("failed to apply %s. %s module is missing", dependencyCRD.Resource, dependencyCRD.Group)
+		}
+		return err
+	}
+	return nil
 }
 
 func (l *logger) chooseFormat(status client.StatusType) string {

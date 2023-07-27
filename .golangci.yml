@@ -1,0 +1,26 @@
+run:
+  modules-download-mode: readonly
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - exportloopref
+    - gochecknoinits
+    - gofmt
+    - gosec
+    - gosimple
+    - govet
+    - ineffassign
+    - misspell
+    - revive
+    - staticcheck
+    - typecheck
+    - unparam
+    - unused
+issues:
+  exclude:
+    # Check this issue for more info: https://github.com/kyoh86/scopelint/issues/4
+    - Using the variable on range scope `tc` in function literal
+  max-issues-per-linter: 0
+  # show all issues of one type instead of only 3
+  max-same-issues: 0

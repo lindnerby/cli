@@ -1,8 +1,6 @@
 package module
 
 import (
-	"crypto/x509"
-	"encoding/pem"
 	"fmt"
 	"os"
 
@@ -16,11 +14,15 @@ import (
 )
 
 type ComponentSignConfig struct {
-	Name          string // Name of the module (mandatory)
-	Version       string // Version of the module (mandatory)
-	KeyPath       string // The private key used for signing (mandatory)
-	SignatureName string // Name of the signature for signing
+	Name    string // Name of the module (mandatory)
+	Version string // Version of the module (mandatory)
+	KeyPath string // The private key used for signing (mandatory)
 }
+
+const (
+	SignatureName = "kyma-module-signature"
+	Issuer        = "kyma-cli"
+)
 
 func Sign(cfg *ComponentSignConfig, remote *Remote) error {
 	if err := cfg.validate(); err != nil {
@@ -38,17 +40,16 @@ func Sign(cfg *ComponentSignConfig, remote *Remote) error {
 	}
 
 	signReg := signing.DefaultRegistry()
-	issuer := "kyma-project.io/cli"
 
 	key, err := privateKey(cfg.KeyPath)
 	if err != nil {
 		return err
 	}
 
-	signReg.RegisterPrivateKey(cfg.SignatureName, key)
+	signReg.RegisterPrivateKey(SignatureName, key)
 
-	if idx := cva.GetDescriptor().GetSignatureIndex(cfg.SignatureName); idx < 0 {
-		return fmt.Errorf("descriptor was already signed under %s at signature index %v", cfg.SignatureName, idx)
+	if idx := cva.GetDescriptor().GetSignatureIndex(SignatureName); idx > 0 {
+		return fmt.Errorf("descriptor was already signed under %s at signature index %v", SignatureName, idx)
 	}
 
 	if err := compdesc.Sign(
@@ -57,7 +58,7 @@ func Sign(cfg *ComponentSignConfig, remote *Remote) error {
 		key,
 		signReg.GetSigner(rsa.Algorithm),
 		signReg.GetHasher(sha512.Algorithm),
-		cfg.SignatureName, issuer,
+		SignatureName, Issuer,
 	); err != nil {
 		return err
 	}
@@ -87,9 +88,9 @@ func Verify(cfg *ComponentSignConfig, remote *Remote) error {
 		return err
 	}
 
-	signReg.RegisterPublicKey(cfg.SignatureName, key)
+	signReg.RegisterPublicKey(SignatureName, key)
 
-	return compdesc.Verify(cva.GetDescriptor(), signReg, cfg.SignatureName)
+	return compdesc.Verify(cva.GetDescriptor(), signReg, SignatureName)
 }
 
 func (cfg *ComponentSignConfig) validate() error {
@@ -102,24 +103,16 @@ func (cfg *ComponentSignConfig) validate() error {
 	if cfg.KeyPath == "" {
 		return errors.New("The key path cannot be empty")
 	}
-	if cfg.SignatureName == "" {
-		return errors.New("The signature name cannot be empty")
-	}
-
 	return nil
 }
 
 func privateKey(pathToPrivateKey string) (interface{}, error) {
-	privKeyFile, err := os.ReadFile(pathToPrivateKey)
+	privateKeyFile, err := os.ReadFile(pathToPrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("unable to open key file: %w", err)
 	}
 
-	block, _ := pem.Decode(privKeyFile)
-	if block == nil {
-		return nil, fmt.Errorf("unable to decode pem formatted block in key: %w", err)
-	}
-	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	key, err := signing.ParsePrivateKey(privateKeyFile)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse private key: %w", err)
 	}
@@ -132,11 +125,7 @@ func publicKey(pathToPublicKey string) (interface{}, error) {
 		return nil, fmt.Errorf("unable to open key file: %w", err)
 	}
 
-	block, _ := pem.Decode(publicKeyFile)
-	if block == nil {
-		return nil, fmt.Errorf("unable to decode pem formatted block in key: %w", err)
-	}
-	key, err := x509.ParsePKIXPublicKey(block.Bytes)
+	key, err := signing.ParsePublicKey(publicKeyFile)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse public key: %w", err)
 	}

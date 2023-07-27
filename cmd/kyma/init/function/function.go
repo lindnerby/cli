@@ -5,6 +5,8 @@ import (
 	"os"
 	"path"
 
+	"github.com/kyma-project/cli/cmd/kyma/sync/function"
+
 	"github.com/kyma-project/cli/internal/cli"
 	"github.com/kyma-project/cli/internal/kube"
 	"github.com/kyma-project/cli/pkg/vscode"
@@ -14,13 +16,15 @@ import (
 )
 
 const (
-	defaultRuntime   = "nodejs14"
+	defaultRuntime   = "nodejs18"
 	defaultReference = "main"
 	defaultBaseDir   = "/"
 )
 
 var (
-	deprecatedRuntimes = map[string]struct{}{}
+	deprecatedRuntimes = map[string]struct{}{
+		"nodejs16": {},
+	}
 )
 
 type command struct {
@@ -51,10 +55,11 @@ Use the flags to specify the initial configuration for your Function or to choos
 	cmd.Flags().StringVarP(
 		&o.Runtime, "runtime", "r", defaultRuntime,
 		`Flag used to define the environment for running your Function. Use one of these options:
-	- nodejs14
-	- nodejs16	
+	- nodejs16 (deprecated)
+	- nodejs18 
 	- python39`,
 	)
+	cmd.Flags().StringVar(&o.SchemaVersion, "schema-version", string(workspace.SchemaVersionDefault), `Version of the config API.`)
 
 	// git function options
 	cmd.Flags().StringVar(&o.URL, "url", "", `Git repository URL`)
@@ -99,12 +104,19 @@ func (c *command) Run() error {
 		)
 	}
 
+	schemaVersion, err := function.ParseSchemaVersion(c.opts.SchemaVersion)
+	if err != nil {
+		s.Failure()
+		return err
+	}
+
 	configuration := workspace.Cfg{
 		Runtime:              c.opts.Runtime,
 		RuntimeImageOverride: c.opts.RuntimeImageOverride,
 		Name:                 c.opts.Name,
 		Namespace:            c.opts.Namespace,
 		Source:               c.opts.source(),
+		SchemaVersion:        schemaVersion,
 	}
 
 	err = workspace.Initialize(configuration, c.opts.Dir)

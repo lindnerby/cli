@@ -10,9 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kyma-project/cli/pkg/module/kubebuilder"
+
 	setup "github.com/kyma-project/cli/internal/cli/setup/envtest"
 	"github.com/kyma-project/cli/internal/kube"
-	"github.com/kyma-project/cli/pkg/step"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 	amv "k8s.io/apimachinery/pkg/util/validation"
@@ -21,32 +22,27 @@ import (
 var ErrEmptyCR = errors.New("provided CR is empty")
 
 type DefaultCRValidator struct {
-	modulePath string
-	crData     []byte
+	crdSearchDir string
+	crData       []byte
 }
 
-func NewDefaultCRValidator(cr []byte, modulePath string) (*DefaultCRValidator, error) {
+func NewDefaultCRValidator(cr []byte, modulePath string) *DefaultCRValidator {
+	crdSearchDir := filepath.Join(modulePath, kubebuilder.OutputPath)
 	return &DefaultCRValidator{
-		modulePath: modulePath,
-		crData:     cr,
-	}, nil
+		crdSearchDir: crdSearchDir,
+		crData:       cr,
+	}
 }
 
-func (v *DefaultCRValidator) Run(ctx context.Context, s step.Step, verbose bool, log *zap.SugaredLogger) error {
+func (v *DefaultCRValidator) Run(ctx context.Context, log *zap.SugaredLogger) error {
 	// skip validation if no CR detected
 	if len(v.crData) == 0 {
-		return nil
-	}
-
-	// setup test env
-	runner, err := setup.EnvTest(s, verbose)
-	if err != nil {
-		return err
+		return ErrEmptyCR
 	}
 
 	crMap, err := parseYamlToMap(v.crData)
 	if err != nil {
-		return fmt.Errorf("Error parsing default CR: %w", err)
+		return fmt.Errorf("error parsing default CR: %w", err)
 	}
 
 	group, kind, err := readGroupKind(crMap)
@@ -54,18 +50,28 @@ func (v *DefaultCRValidator) Run(ctx context.Context, s step.Step, verbose bool,
 		return err
 	}
 
-	searchDirPath := filepath.Join(v.modulePath, "charts")
-	crdFound, crdFilePath, err := findCRDFileFor(group, kind, searchDirPath)
+	// find the file containing the CRD for given group and kind
+	crdFound, crdFilePath, err := findCRDFileFor(group, kind, v.crdSearchDir)
 	if err != nil {
-		return fmt.Errorf("Error finding CRD file in the %q directory: %w", searchDirPath, err)
+		return fmt.Errorf("error finding CRD file in the %q directory: %w", v.crdSearchDir, err)
 	}
 	if !crdFound {
-		return fmt.Errorf("Can't find the CRD for (group: %q, kind %q)", group, kind)
+		return fmt.Errorf("can't find the CRD for (group: %q, kind %q)", group, kind)
+	}
+
+	return runTestEnv(ctx, log, crdFilePath, crMap)
+}
+
+func runTestEnv(ctx context.Context, log *zap.SugaredLogger, crdFilePath string, crMap map[string]interface{}) error {
+	// setup test env
+	runner, err := setup.EnvTest()
+	if err != nil {
+		return err
 	}
 
 	err = ensureDefaultNamespace(crMap)
 	if err != nil {
-		return err
+		return fmt.Errorf("error parsing default CR: %w", err)
 	}
 
 	properCR, err := renderYamlFromMap(crMap)
@@ -78,9 +84,7 @@ func (v *DefaultCRValidator) Run(ctx context.Context, s step.Step, verbose bool,
 	}
 	defer func() {
 		if err := runner.Stop(); err != nil {
-			//TODO: This doesn't seem to print anything...
-			log.Error(fmt.Errorf("Error stopping envTest: %w", err))
-			//THIS does: fmt.Println(fmt.Errorf("Error stopping envTest: %w", stopErr))
+			log.Error(fmt.Errorf("error stopping envTest: %w", err))
 		}
 	}()
 
@@ -95,18 +99,18 @@ func (v *DefaultCRValidator) Run(ctx context.Context, s step.Step, verbose bool,
 	}
 
 	if err := kc.Apply(ctx, false, objs...); err != nil {
-		return fmt.Errorf("Error applying the default CR: %w", err)
+		return fmt.Errorf("error applying the default CR: %w", err)
 	}
 	return nil
 }
 
-// ensureDefaultNamespace ensures that the metadata.namespace attribute exists and it's value is "default". This is because of how we use the envtest to validate the CR.
+// ensureDefaultNamespace ensures that the metadata.namespace attribute exists, and its value is "default". This is because of how we use the envtest to validate the CR.
 func ensureDefaultNamespace(modelMap map[string]interface{}) error {
 
 	//Traverse the Map to look for "metadata.namespace"
 	metadataMap, err := mustReadMap(modelMap, "metadata")
 	if err != nil {
-		return fmt.Errorf("Error parsing default CR: %w", err)
+		return err
 	}
 
 	namespaceVal, ok := metadataMap["namespace"]
@@ -117,7 +121,7 @@ func ensureDefaultNamespace(modelMap map[string]interface{}) error {
 		//Set the "metadata.namespace" if different than "default"
 		existing, ok := namespaceVal.(string)
 		if !ok {
-			return errors.New("Error parsing default CR: Attribute \"metadata.namespace\" is not a string")
+			return errors.New("attribute \"metadata.namespace\" is not a string")
 		}
 		if existing != "default" {
 			metadataMap["namespace"] = "default"
@@ -130,14 +134,14 @@ func ensureDefaultNamespace(modelMap map[string]interface{}) error {
 func readGroupKind(crMap map[string]interface{}) (group, kind string, retErr error) {
 	apiVersion, err := mustReadString(crMap, "apiVersion")
 	if err != nil {
-		retErr = fmt.Errorf("Can't parse default CR data: %w", err)
+		retErr = fmt.Errorf("can't parse default CR data: %w", err)
 		return
 	}
 
 	group = strings.Split(apiVersion, "/")[0] //e.g: apiVersion: example.org/v1
 	kind, err = mustReadString(crMap, "kind")
 	if err != nil {
-		retErr = fmt.Errorf("Can't parse default CR data: %w", err)
+		retErr = fmt.Errorf("can't parse default CR data: %w", err)
 		return
 	}
 
@@ -148,12 +152,12 @@ func readGroupKind(crMap map[string]interface{}) (group, kind string, retErr err
 func mustReadMap(input map[string]interface{}, key string) (map[string]interface{}, error) {
 	attrVal, ok := input[key]
 	if !ok {
-		return nil, fmt.Errorf("Attribute %q not found", key)
+		return nil, fmt.Errorf("attribute %q not found", key)
 	}
 
 	asMap, ok := attrVal.(map[string]interface{})
 	if !ok {
-		return nil, fmt.Errorf("Attribute %q is not a Map", key)
+		return nil, fmt.Errorf("attribute %q is not a Map", key)
 	}
 
 	return asMap, nil
@@ -163,12 +167,12 @@ func mustReadMap(input map[string]interface{}, key string) (map[string]interface
 func mustReadString(input map[string]interface{}, key string) (string, error) {
 	attrVal, ok := input[key]
 	if !ok {
-		return "", fmt.Errorf("Attribute %q not found", key)
+		return "", fmt.Errorf("attribute %q not found", key)
 	}
 
 	asString, ok := attrVal.(string)
 	if !ok {
-		return "", fmt.Errorf("Attribute %q is not a string", key)
+		return "", fmt.Errorf("attribute %q is not a string", key)
 	}
 
 	return asString, nil
@@ -176,9 +180,9 @@ func mustReadString(input map[string]interface{}, key string) (string, error) {
 
 func parseYamlToMap(crData []byte) (map[string]interface{}, error) {
 	modelMap := make(map[string]interface{})
-	err := yaml.Unmarshal([]byte(crData), &modelMap)
+	err := yaml.Unmarshal(crData, &modelMap)
 	if err != nil {
-		return nil, fmt.Errorf("Error parsing default CR: %w", err)
+		return nil, fmt.Errorf("error parsing default CR: %w", err)
 	}
 
 	return modelMap, nil
@@ -188,25 +192,25 @@ func renderYamlFromMap(modelMap map[string]interface{}) ([]byte, error) {
 
 	output, err := yaml.Marshal(modelMap)
 	if err != nil {
-		return nil, fmt.Errorf("Error processing default CR data: %w", err)
+		return nil, fmt.Errorf("error processing default CR data: %w", err)
 	}
 
 	return output, nil
 
 }
 
-// findCRDFileFor returns path to the file with a CRD definition for the given group and kind, if exists. It looks in the dirPath directory and all of it's subdirectories, recursively. The first parameter is true if the file is found, it's false otherwise.
+// findCRDFileFor returns path to the file with a CRD definition for the given group and kind, if exists.
+// It looks in the dirPath directory and all of its subdirectories, recursively. The first parameter is true if the file is found, it's false otherwise.
 func findCRDFileFor(group, kind, dirPath string) (bool, string, error) {
 
 	//list all files in the dirPath and all it's subdirectories, recursively
 	files, err := listFiles(dirPath)
 	if err != nil {
-		return false, "", fmt.Errorf("Error listing files in %q directory: %w", dirPath, err)
+		return false, "", fmt.Errorf("error listing files in %q directory: %w", dirPath, err)
 	}
 
 	var found string
 	for _, f := range files {
-		//fmt.Printf("- Checking file: %q\n", f)
 		ok, err := isCRDFileFor(group, kind, f)
 		if err != nil {
 			//Error is expected. Either the file is not YAML, or it's not a CRD, or it's a CRD but not the one we're looking for.
@@ -227,11 +231,19 @@ func findCRDFileFor(group, kind, dirPath string) (bool, string, error) {
 
 // isCRDFileFor checks if the given file is a CRD for given group and kind.
 func isCRDFileFor(group, kind, filePath string) (bool, error) {
-	{
+	res, err := getCRDFromFile(group, kind, filePath)
+	if err != nil {
+		return false, err
+	}
+	return res != nil, nil
+}
 
+// getCRDFromFile tries to find a CRD for given group and kind in the given multi-document YAML file. Returns a generic map representation of the CRD
+func getCRDFromFile(group, kind, filePath string) ([]byte, error) {
+	{
 		f, err := os.Open(filePath)
 		if err != nil {
-			return false, fmt.Errorf("Error reading \"%q\": %w", filePath, err)
+			return nil, fmt.Errorf("error reading \"%q\": %w", filePath, err)
 		}
 		defer f.Close()
 
@@ -248,7 +260,7 @@ func isCRDFileFor(group, kind, filePath string) (bool, error) {
 			err = yd.Decode(modelMap)
 			if err != nil {
 				//fail fast if it's not a proper YAML
-				return false, err
+				return nil, err
 			}
 
 			//Ensure it's a CRD
@@ -280,17 +292,21 @@ func isCRDFileFor(group, kind, filePath string) (bool, error) {
 
 			//Check if this CRD is the one we're looking for
 			if groupVal == group && kindVal == kind {
-				return true, nil
+				res, err := yaml.Marshal(modelMap)
+				if err != nil {
+					return nil, err
+				}
+				return res, nil
 			}
 		}
 
 		if errors.Is(err, io.EOF) {
 			//Failure: No document in the file matches our search criteria.
-			return false, nil
+			return nil, nil
 		}
 
 		//We should never get here, because Decode() should return EOF once there's no more data to read.
-		return false, err
+		return nil, err
 	}
 }
 
@@ -311,7 +327,7 @@ func listFiles(dirPath string) ([]string, error) {
 
 	err := filepath.Walk(dirPath, walkFunc)
 	if err != nil {
-		return nil, fmt.Errorf("Error reading directory \"%q\": %w", dirPath, err)
+		return nil, fmt.Errorf("error reading directory \"%q\": %w", dirPath, err)
 	}
 
 	return res, nil
@@ -320,17 +336,75 @@ func listFiles(dirPath string) ([]string, error) {
 // ValidateName checks if the name is at least three characters long and if it conforms to the "RFC 1035 Label Names" specification (K8s compatibility requirement)
 func ValidateName(name string) error {
 	if len(name) < 3 {
-		return errors.New("Invalid module name: name must be at least three characters long")
+		return errors.New("invalid module name: name must be at least three characters long")
 	}
 
 	violations := amv.IsDNS1035Label(name)
 	if len(violations) == 1 {
-		return fmt.Errorf("Invalid module name: %s", violations[0])
+		return fmt.Errorf("invalid module name: %s", violations[0])
 	}
 	if len(violations) > 1 {
 		vl := "\n - " + strings.Join(violations, "\n - ")
-		return fmt.Errorf("Invalid module name: %s", vl)
+		return fmt.Errorf("invalid module name: %s", vl)
 	}
 
 	return nil
+}
+
+type SingleManifestFileCRValidator struct {
+	manifestPath string
+	crData       []byte
+}
+
+func NewSingleManifestFileCRValidator(cr []byte, manifestPath string) *SingleManifestFileCRValidator {
+	return &SingleManifestFileCRValidator{
+		manifestPath: manifestPath,
+		crData:       cr,
+	}
+}
+
+func (v *SingleManifestFileCRValidator) Run(ctx context.Context, log *zap.SugaredLogger) error {
+	// skip validation if no CR detected
+	if len(v.crData) == 0 {
+		return ErrEmptyCR
+	}
+
+	crMap, err := parseYamlToMap(v.crData)
+	if err != nil {
+		return fmt.Errorf("error parsing default CR: %w", err)
+	}
+
+	group, kind, err := readGroupKind(crMap)
+	if err != nil {
+		return err
+	}
+
+	// extract CRD matching group and kind from the multi-document YAML manifest
+	crdBytes, err := getCRDFromFile(group, kind, v.manifestPath)
+	if err != nil {
+		return fmt.Errorf("error finding CRD file in the %q file: %w", v.manifestPath, err)
+	}
+	if crdBytes == nil {
+		return fmt.Errorf("can't find the CRD for (group: %q, kind %q)", group, kind)
+	}
+
+	// store extracted CRD in a temp file
+	tempDir, err := os.MkdirTemp("", "temporary-crd")
+	if err != nil {
+		return fmt.Errorf("error creating temporary directory: %w", err)
+	}
+	defer func() {
+		err := os.RemoveAll(tempDir)
+		if err != nil {
+			log.Warn("Error removing temporary directory", err)
+		}
+	}()
+	tempCRDFile := filepath.Join(tempDir, "crd.yaml")
+	err = os.WriteFile(tempCRDFile, crdBytes, 0600)
+	if err != nil {
+		return fmt.Errorf("error writing temporary CRD file %q file: %w", tempCRDFile, err)
+	}
+
+	// run testEnv using the temporary file with extracted CRD
+	return runTestEnv(ctx, log, tempCRDFile, crMap)
 }

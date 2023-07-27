@@ -1,6 +1,7 @@
 package module
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,11 +14,16 @@ import (
 	"github.com/mandelsoft/vfs/pkg/vfs"
 	"github.com/open-component-model/ocm/pkg/common/accessobj"
 	"github.com/open-component-model/ocm/pkg/contexts/ocm/compdesc"
+	ocmv1 "github.com/open-component-model/ocm/pkg/contexts/ocm/compdesc/meta/v1"
 	"github.com/open-component-model/ocm/pkg/contexts/ocm/repositories/comparch"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 )
+
+//nolint:gosec
+const OCIRegistryCredLabel = "oci-registry-cred"
 
 // ResourceDescriptor contains all information to describe a resource
 type ResourceDescriptor struct {
@@ -33,10 +39,29 @@ type ResourceDescriptorList struct {
 // AddResources adds the resources in the given resource definitions into the archive and its FS.
 // A resource definition is a string with format: NAME:TYPE@PATH, where NAME and TYPE can be omitted and will default to the last path element name and "helm-chart" respectively
 func AddResources(
-	archive *comparch.ComponentArchive, modDef *Definition, log *zap.SugaredLogger, fs vfs.FileSystem,
+	archive *comparch.ComponentArchive,
+	modDef *Definition,
+	log *zap.SugaredLogger,
+	fs vfs.FileSystem,
+	registryCredSelector string,
 ) error {
 	descriptor := archive.GetDescriptor()
-	resources, err := generateResources(log, modDef.Version, modDef.Layers...)
+	var matchLabels []byte
+	if registryCredSelector != "" {
+		selector, err := metav1.ParseToLabelSelector(registryCredSelector)
+		if err != nil {
+			return err
+		}
+		matchLabels, err = json.Marshal(selector.MatchLabels)
+		if err != nil {
+			return err
+		}
+		descriptor.SetLabels([]ocmv1.Label{{
+			Name:  OCIRegistryCredLabel,
+			Value: matchLabels,
+		}})
+	}
+	resources, err := generateResources(log, modDef.Version, matchLabels, modDef.Layers...)
 	if err != nil {
 		return err
 	}
@@ -63,7 +88,7 @@ func AddResources(
 // generateResources generates resources by parsing the given definitions.
 // Definitions have the following format: NAME:TYPE@PATH
 // If a definition does not have a name or type, the name of the last path element is used and it is assumed to be a helm-chart type.
-func generateResources(log *zap.SugaredLogger, version string, defs ...Layer) ([]ResourceDescriptor, error) {
+func generateResources(log *zap.SugaredLogger, version string, credLabel []byte, defs ...Layer) ([]ResourceDescriptor, error) {
 	res := []ResourceDescriptor{}
 	for _, d := range defs {
 		r := ResourceDescriptor{Input: &blob.Input{}}
@@ -84,6 +109,13 @@ func generateResources(log *zap.SugaredLogger, version string, defs ...Layer) ([
 			r.Input.ExcludeFiles = d.excludedFiles
 		} else {
 			r.Input.Type = "file"
+		}
+
+		if len(credLabel) != 0 {
+			r.SetLabels([]ocmv1.Label{{
+				Name:  OCIRegistryCredLabel,
+				Value: credLabel,
+			}})
 		}
 
 		log.Debugf("Generated resource:\n%s", r)
@@ -117,11 +149,46 @@ func (rd ResourceDescriptor) String() string {
 	return string(y)
 }
 
-// Inspect analyzes the contents of a module and updates the module definition provided as parameter with all information contained in the module (layers, metadata and resources).
-// Inspect supports:
+// Inspect updates the module definition provided as parameter with necessary data.
+// Inspect supports a single source file path.
+func Inspect(def *Definition, log *zap.SugaredLogger) error {
+	log.Debugf("Inspecting module contents at [%s]:", def.Source)
+
+	if err := def.validate(); err != nil {
+		return err
+	}
+
+	// generated raw manifest -> layer 1
+	def.Layers = append(def.Layers, Layer{
+		name:         rawManifestLayerName,
+		resourceType: typeYaml,
+		path:         def.SingleManifestPath,
+	})
+
+	// Add default CR if generating template
+	var cr []byte
+	if def.RegistryURL != "" {
+		if def.DefaultCRPath != "" {
+			var err error
+			cr, err = os.ReadFile(def.DefaultCRPath)
+			if err != nil {
+				return fmt.Errorf("could not read CR file %q: %w", def.DefaultCRPath, err)
+			}
+		}
+	}
+
+	def.DefaultCR = cr
+	//def.Repo = p.Repo
+
+	return nil
+}
+
+// InspectLegacy analyzes the contents of a module and updates the module definition provided as parameter with all information contained in the module (layers, metadata and resources).
+// InspectLegacy supports:
 // Kubebuilder projects: if a PROJECT file is found and correctly parsed, the project will automatically be generated and layered.
 // Custom module: If not a kubebuilder project, the user has complete freedom to layer the contents as desired via customDefs. Any contents of path not included in the customDefs will be added to the base layer
-func Inspect(def *Definition, customDefs []string, s step.Step, log *zap.SugaredLogger) error {
+// Deprecated.
+func InspectLegacy(def *Definition, customDefs []string, s step.Step, log *zap.SugaredLogger) error {
 	log.Debugf("Inspecting module contents at [%s]:", def.Source)
 	layers := []Layer{}
 
@@ -161,10 +228,8 @@ func inspectProject(def *Definition, p *kubebuilder.Project, layers []Layer, s s
 		return err
 	}
 
-	// generated chart -> layer 1
-	chartPath, err := p.Build(
-		def.Name, def.Version,
-	) // TODO switch from charts to pure manifests when mod-mngr is ready
+	// generated raw manifest -> layer 1
+	renderedManifestPath, err := p.Build(def.Name)
 	if err != nil {
 		return err
 	}
@@ -199,9 +264,9 @@ func inspectProject(def *Definition, p *kubebuilder.Project, layers []Layer, s s
 	def.Repo = p.Repo
 	def.DefaultCR = cr
 	def.Layers = append(def.Layers, Layer{
-		name:         filepath.Base(chartPath),
-		resourceType: typeHelmChart,
-		path:         chartPath,
+		name:         rawManifestLayerName,
+		resourceType: typeYaml,
+		path:         renderedManifestPath,
 	})
 	def.Layers = append(def.Layers, layers...)
 

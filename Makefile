@@ -3,50 +3,62 @@
 ifndef VERSION
 	VERSION = ${shell git rev-parse --abbrev-ref HEAD}-${shell git rev-parse --short HEAD}
 
-	ifneq (${shell git tag -l "stable"},) # if there is a stable tag
-		ifeq (${shell git rev-list -n 1 tags/stable},${shell git rev-parse HEAD}) # if stable tag is the same as current commit
-			VERSION = stable-${shell git rev-parse --short HEAD}
-		endif
-	endif
 endif
+
+ifeq (,$(shell go env GOBIN))
+	GOBIN=$(shell go env GOPATH)/bin
+else
+	GOBIN=$(shell go env GOBIN)
+endif
+LOCALBIN ?= $(shell pwd)/bin
+$(LOCALBIN):
+	mkdir -p $(LOCALBIN)
+GOLANG_CI_LINT = $(LOCALBIN)/golangci-lint
+GOLANG_CI_LINT_VERSION ?= v1.52.2
+
+.PHONY: lint
+lint:
+	GOBIN=$(LOCALBIN) go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANG_CI_LINT_VERSION)
+	$(LOCALBIN)/golangci-lint run -v ./...
 
 FLAGS = -ldflags '-s -w -X github.com/kyma-project/cli/cmd/kyma/version.Version=$(VERSION)'
 
 .PHONY: resolve
 resolve:
-	go mod tidy -compat=1.18
+	go mod tidy
 
 .PHONY: validate
 validate:
-	./hack/verify-lint.sh
 	./hack/verify-generated-docs.sh
 
 .PHONY: build
-build: build-windows build-linux build-darwin build-windows-arm build-linux-arm
+build: build-windows build-linux build-darwin build-windows-arm build-linux-arm build-darwin-arm
 
+# AMD based chipsets
 .PHONY: build-windows
 build-windows:
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o ./bin/kyma.exe $(FLAGS) ./cmd
-
-.PHONY: build-windows-arm
-build-windows-arm:
-	CGO_ENABLED=0 GOOS=windows GOARCH=arm go build -o ./bin/kyma-arm.exe $(FLAGS) ./cmd
-
-.PHONY: build-linux
-build-linux:
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ./bin/kyma-linux $(FLAGS) ./cmd
-
-.PHONY: build-linux-arm
-build-linux-arm:
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o ./bin/kyma-linux-arm $(FLAGS) ./cmd
 
 .PHONY: build-darwin
 build-darwin:
 	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o ./bin/kyma-darwin $(FLAGS) ./cmd
 
-# .PHONY: build-darwin-arm
-# build-darwin-arm:
-# 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o ./bin/kyma-darwin-arm $(FLAGS) ./cmd
+.PHONY: build-linux
+build-linux:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ./bin/kyma-linux $(FLAGS) ./cmd
+
+# ARM based chipsets
+.PHONY: build-windows-arm
+build-windows-arm:
+	CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -o ./bin/kyma-arm.exe $(FLAGS) ./cmd
+
+.PHONY: build-darwin-arm
+build-darwin-arm:
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o ./bin/kyma-darwin-arm $(FLAGS) ./cmd
+
+.PHONY: build-linux-arm
+build-linux-arm:
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o ./bin/kyma-linux-arm $(FLAGS) ./cmd
 
 .PHONY: docs
 docs:
@@ -69,10 +81,6 @@ archive:
 
 .PHONY: upload-binaries
 upload-binaries:
-ifeq ($(STABLE), true)
-	gcloud auth activate-service-account --key-file "$(GOOGLE_APPLICATION_CREDENTIALS)"
-	gsutil cp bin/* $(KYMA_CLI_STABLE_BUCKET)
-endif
 ifeq ($(UNSTABLE), true)
 	gcloud auth activate-service-account --key-file "$(GOOGLE_APPLICATION_CREDENTIALS)"
 	gsutil cp bin/* $(KYMA_CLI_UNSTABLE_BUCKET)

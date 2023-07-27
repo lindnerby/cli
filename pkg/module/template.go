@@ -2,7 +2,6 @@ package module
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"text/template"
@@ -10,57 +9,40 @@ import (
 	"github.com/kyma-project/cli/pkg/module/oci"
 	"github.com/open-component-model/ocm/pkg/contexts/ocm"
 	"github.com/open-component-model/ocm/pkg/contexts/ocm/compdesc"
-	ocmv1 "github.com/open-component-model/ocm/pkg/contexts/ocm/compdesc/meta/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 )
 
 const (
-	modTemplate = `apiVersion: operator.kyma-project.io/v1beta1
+	modTemplate = `apiVersion: operator.kyma-project.io/v1beta2
 kind: ModuleTemplate
 metadata:
-  name: moduletemplate-{{ .ShortName }}
+  name: {{.ResourceName}}
   namespace: kcp-system
+{{- with .Labels}}
   labels:
-    "operator.kyma-project.io/managed-by": "lifecycle-manager"
-    "operator.kyma-project.io/controller-name": "manifest"
-    "operator.kyma-project.io/module-name": "{{ .ShortName }}"
+    {{- range $key, $value := . }}
+    {{ printf "%q" $key }}: {{ printf "%q" $value }}
+    {{- end}}
+{{- end}} 
+{{- with .Annotations}}
+  annotations:
+    {{- range $key, $value := . }}
+    {{ printf "%q" $key }}: {{ printf "%q" $value }}
+    {{- end}}
+{{- end}} 
 spec:
-  target: {{.Target}}
   channel: {{.Channel}}
   data:
-{{.Data | indent 4}}
+{{- with .Data}}
+{{. | indent 4}}
+{{- end}}
   descriptor:
 {{yaml .Descriptor | printf "%s" | indent 4}}
 `
-
-	//nolint:gosec
-	OCIRegistryCredLabel = "oci-registry-cred"
 )
 
-func Template(
-	remote ocm.ComponentVersionAccess, channel, target string, data []byte, registryCredSelector string,
-) ([]byte, error) {
+func Template(remote ocm.ComponentVersionAccess, moduleTemplateName, channel string, data []byte, labels, annotations map[string]string) ([]byte, error) {
 	descriptor := remote.GetDescriptor()
-	if registryCredSelector != "" {
-		selector, err := metav1.ParseToLabelSelector(registryCredSelector)
-		if err != nil {
-			return nil, err
-		}
-		matchLabels, err := json.Marshal(selector.MatchLabels)
-		if err != nil {
-			return nil, err
-		}
-		for i := range descriptor.Resources {
-			resource := &descriptor.Resources[i]
-			resource.SetLabels(
-				[]ocmv1.Label{{
-					Name:  OCIRegistryCredLabel,
-					Value: matchLabels,
-				}},
-			)
-		}
-	}
 	ref, err := oci.ParseRef(descriptor.Name)
 	if err != nil {
 		return nil, err
@@ -71,18 +53,26 @@ func Template(
 		return nil, err
 	}
 
+	shortName := ref.ShortName()
+	labels["operator.kyma-project.io/module-name"] = shortName
+	resourceName := moduleTemplateName
+	if len(resourceName) == 0 {
+		resourceName = shortName + "-" + channel
+	}
 	td := struct { // Custom struct for the template
-		ShortName  string                              // Last part of the component descriptor name
-		Descriptor compdesc.ComponentDescriptorVersion // descriptor info for the template
-		Channel    string
-		Target     string
-		Data       string // contents for the spec.data section of the template taken from the defaults.yaml file in the mod folder
+		ResourceName string                              // K8s resource name of the generated ModuleTemplate
+		Descriptor   compdesc.ComponentDescriptorVersion // descriptor info for the template
+		Channel      string
+		Data         string // contents for the spec.data section of the template taken from the defaults.yaml file in the mod folder
+		Labels       map[string]string
+		Annotations  map[string]string
 	}{
-		ShortName:  ref.ShortName(),
-		Descriptor: cva,
-		Channel:    channel,
-		Target:     target,
-		Data:       string(data),
+		ResourceName: resourceName,
+		Descriptor:   cva,
+		Channel:      channel,
+		Data:         string(data),
+		Labels:       labels,
+		Annotations:  annotations,
 	}
 
 	t, err := template.New("modTemplate").Funcs(template.FuncMap{"yaml": yaml.Marshal, "indent": Indent}).Parse(modTemplate)

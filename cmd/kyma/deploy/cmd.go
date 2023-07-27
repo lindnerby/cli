@@ -9,6 +9,7 @@ import (
 	"github.com/kyma-project/cli/pkg/step"
 
 	"github.com/kyma-incubator/reconciler/pkg/model"
+
 	"github.com/kyma-project/cli/internal/clusterinfo"
 	"github.com/kyma-project/cli/internal/coredns"
 	"github.com/kyma-project/cli/internal/deploy"
@@ -17,16 +18,17 @@ import (
 	"github.com/kyma-project/cli/internal/deploy/component"
 	"github.com/kyma-project/cli/internal/deploy/values"
 
+	"github.com/pkg/errors"
+	"github.com/spf13/cobra"
+	"go.uber.org/zap"
+
 	"github.com/kyma-project/cli/internal/cli"
 	"github.com/kyma-project/cli/internal/config"
 	"github.com/kyma-project/cli/internal/kube"
 	"github.com/kyma-project/cli/internal/nice"
 	"github.com/kyma-project/cli/internal/version"
-	"github.com/pkg/errors"
-	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 
-	//Register all reconcilers
+	// Register all reconcilers
 	_ "github.com/kyma-incubator/reconciler/pkg/reconciler/instances"
 )
 
@@ -53,7 +55,7 @@ func NewCmd(o *Options) *cobra.Command {
 
 	cobraCmd.Flags().StringArrayVarP(&o.Components, "component", "", []string{}, `Provide one or more components to deploy, for example:
 	- With short-hand notation: "--component name@namespace"
-	- With verbose JSON structure "--component '{"name": "componentName","namespace": "componenNamespace","url": "componentUrl","version": "1.2.3"}'`)
+	- With verbose JSON structure "--component '{"name": "componentName","namespace": "componentNamespace","url": "componentUrl","version": "1.2.3"}'`)
 	cobraCmd.Flags().StringVarP(&o.ComponentsFile, "components-file", "c", "", `Path to the components file (default "$HOME/.kyma/sources/installation/resources/components.yaml" or ".kyma-sources/installation/resources/components.yaml")`)
 	cobraCmd.Flags().StringVarP(&o.WorkspacePath, "workspace", "w", "", `Path to download Kyma sources (default "$HOME/.kyma/sources" or ".kyma-sources")`)
 	cobraCmd.Flags().StringVarP(&o.Source, "source", "s", config.DefaultKyma2Version, `Installation source:
@@ -124,7 +126,7 @@ func (cmd *command) run(ctx context.Context) error {
 	}
 
 	if !cmd.opts.NonInteractive {
-		if err := cli.DetectManagedEnvironment(ctx, cmd.K8s, cmd.Factory.NewStep("")); err != nil {
+		if err := cli.DetectManagedEnvironment(ctx, cmd.K8s, cmd.Factory.NewStep("Detecting Environment")); err != nil {
 			return err
 		}
 	}

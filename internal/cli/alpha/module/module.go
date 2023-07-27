@@ -7,7 +7,7 @@ import (
 
 	"github.com/avast/retry-go"
 	"github.com/kyma-project/cli/internal/kube"
-	"github.com/kyma-project/lifecycle-manager/api/v1beta1"
+	"github.com/kyma-project/lifecycle-manager/api/v1beta2"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -20,12 +20,13 @@ import (
 )
 
 type Interactor interface {
-	// Get retrieves all modules that the Interactor deals with.
-	Get(ctx context.Context) ([]v1beta1.Module, error)
+	// Get retrieves all modules and the channel of the kyma CR that the Interactor deals with.
+	Get(ctx context.Context) ([]v1beta2.Module, string, error)
 	// Update applies all modules that the Interactor deals with.
-	Update(ctx context.Context, modules []v1beta1.Module) error
+	Update(ctx context.Context, modules []v1beta2.Module) error
 	// WaitUntilReady blocks until all Modules are confirmed to be applied and ready
 	WaitUntilReady(ctx context.Context) error
+	GetAllModuleTemplates(ctx context.Context) (v1beta2.ModuleTemplateList, error)
 }
 
 var _ Interactor = &DefaultInteractor{}
@@ -52,29 +53,37 @@ func NewInteractor(
 	}
 }
 
-func (i *DefaultInteractor) Get(ctx context.Context) ([]v1beta1.Module, error) {
-	kyma := &v1beta1.Kyma{}
+func (i *DefaultInteractor) Get(ctx context.Context) ([]v1beta2.Module, string, error) {
+	kyma := &v1beta2.Kyma{}
 	if err := i.K8s.Ctrl().Get(ctx, i.Key, kyma); err != nil {
-		return nil, fmt.Errorf("could not get Kyma %ss: %w", i.Key, err)
+		return nil, "", fmt.Errorf("could not get Kyma %ss: %w", i.Key, err)
 	}
 
 	i.lastKnownResourceVersion = kyma.GetResourceVersion()
 
-	return kyma.Spec.Modules, nil
+	return kyma.Spec.Modules, kyma.Spec.Channel, nil
+}
+
+func (i *DefaultInteractor) GetAllModuleTemplates(ctx context.Context) (v1beta2.ModuleTemplateList, error) {
+	var allTemplates v1beta2.ModuleTemplateList
+	if err := i.K8s.Ctrl().List(ctx, &allTemplates); err != nil {
+		return v1beta2.ModuleTemplateList{}, fmt.Errorf("could not get Moduletemplates: %w", err)
+	}
+	return allTemplates, nil
 }
 
 // Update tries to update the modules in the Kyma Instance and retries on failure
 // It exits without retrying if the Kyma Resource cannot be fetched at least once.
-func (i *DefaultInteractor) Update(ctx context.Context, modules []v1beta1.Module) error {
+func (i *DefaultInteractor) Update(ctx context.Context, modules []v1beta2.Module) error {
 	ctx, cancel := context.WithTimeout(ctx, i.Timeout)
 	defer cancel()
 
-	kyma := &v1beta1.Kyma{}
+	kyma := &v1beta2.Kyma{}
 	if err := i.K8s.Ctrl().Get(ctx, i.Key, kyma); err != nil {
 		return err
 	}
 	oldGen := kyma.GetGeneration()
-	if err := retry.Do(
+	err := retry.Do(
 		func() error {
 			kyma.Spec.Modules = modules
 			if err := i.K8s.Ctrl().Update(ctx, kyma, &client.UpdateOptions{FieldManager: "kyma"}); err != nil {
@@ -86,14 +95,11 @@ func (i *DefaultInteractor) Update(ctx context.Context, modules []v1beta1.Module
 			return nil
 		}, retry.Attempts(3), retry.Delay(3*time.Second), retry.DelayType(retry.BackOffDelay),
 		retry.LastErrorOnly(false), retry.Context(ctx),
-	); err != nil {
-		return err
-	}
-
-	return nil
+	)
+	return err
 }
 
-// WaitUntilReady uses the internal i.changed tracker to determine wether the last apply caused
+// WaitUntilReady uses the internal i.changed tracker to determine whether the last apply caused
 // any changes on the cluster. If it did not, then it will shortcut to retrieve the latest version
 // from the cluster and determine if it is ready. If it has been changed, then
 // it will start a watch request and read out the last state. If it is in error,
@@ -116,7 +122,7 @@ func (i *DefaultInteractor) WaitUntilReady(ctx context.Context) error {
 		},
 	}
 
-	kymas := v1beta1.KymaList{}
+	kymas := v1beta2.KymaList{}
 	if !i.changed {
 		if err := i.K8s.Ctrl().List(ctx, &kymas, &options); err != nil {
 			return fmt.Errorf("could not start listing for kyma readiness: %w", err)
@@ -158,13 +164,13 @@ func (i *DefaultInteractor) WaitUntilReady(ctx context.Context) error {
 }
 
 // IsKymaReady interprets the status of a Kyma Resource and uses this to determine if it can be considered Ready.
-// It checks for v1beta1.StateReady, and if it is set, determines if this state can be trusted by observing
+// It checks for v1beta2.StateReady, and if it is set, determines if this state can be trusted by observing
 // if the status fields match the desired state, and if the lastOperation is filled by the lifecycle-manager.
 func IsKymaReady(l *zap.SugaredLogger, obj runtime.Object) error {
-	kyma := obj.(*v1beta1.Kyma)
+	kyma := obj.(*v1beta2.Kyma)
 	l.Info(kyma.Status)
 	switch kyma.Status.State {
-	case v1beta1.StateReady:
+	case v1beta2.StateReady:
 		if len(kyma.Status.Modules) != len(kyma.Spec.Modules) {
 			return fmt.Errorf("kyma has status Ready but cannot be up to date "+
 				"since modules tracked in status differ from modules in desired state/spec (%v in status, %v in spec)",
@@ -179,6 +185,8 @@ func IsKymaReady(l *zap.SugaredLogger, obj runtime.Object) error {
 			)
 		}
 		return nil
+	case v1beta2.StateWarning:
+		return ErrKymaInWarningState
 	default:
 		lastOperation := kyma.Status.LastOperation
 		if lastOperation.Operation == "" {
