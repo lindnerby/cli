@@ -7,6 +7,8 @@ import (
 	"github.com/kyma-project/cli/internal/cli"
 )
 
+const lintFail = "test"
+
 func main() {
 	command := kyma.NewCmd(cli.NewOptions())
 
