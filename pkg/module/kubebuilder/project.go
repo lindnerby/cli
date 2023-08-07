@@ -36,7 +36,7 @@ type Project struct {
 func ParseProject(path string) (*Project, error) {
 	yml, err := os.ReadFile(filepath.Join(path, projectFile))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read kubebuilder project file: %w", err)
 	}
 	p := &Project{}
 	if err := yaml.Unmarshal(yml, p); err != nil {
@@ -63,7 +63,7 @@ func (p *Project) Build(name string) (string, error) {
 
 	k, err := kustomize.ParseKustomization(filepath.Join(p.path, defaultKustomization))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("error parsing kustomization: %w", err)
 	}
 
 	// create output folders
@@ -75,10 +75,9 @@ func (p *Project) Build(name string) (string, error) {
 		return "", fmt.Errorf("could not create chart templates output dir: %w", err)
 	}
 
-	// do build
 	yml, err := kustomize.Build(k)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to render kustomization: %w", err)
 	}
 	renderedManifestPath := filepath.Join(manifestsPath, "rendered.yaml")
 	if err := os.WriteFile(renderedManifestPath, yml, os.ModePerm); err != nil {
@@ -92,7 +91,7 @@ func (p *Project) Config() (string, error) {
 	configPath := filepath.Join(p.path, configFile)
 	info, err := os.Stat(configPath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to get file information: %w", err)
 	}
 	if info.IsDir() {
 		return "", fmt.Errorf("expected file but found directory at %q", configPath)
@@ -161,5 +160,9 @@ func (p *Project) DefaultCR(s step.Step) ([]byte, error) {
 		defaultCR = filepath.Join(samplesDir, filesInDir[0].Name())
 	}
 
-	return os.ReadFile(defaultCR)
+	data, err := os.ReadFile(defaultCR)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read default CR file: %w", err)
+	}
+	return data, nil
 }

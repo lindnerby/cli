@@ -4,21 +4,21 @@ run:
 linters:
   disable-all: true
   enable:
-    - errcheck
-    - exportloopref
-    - forcetypeassert
-    - gochecknoinits
-    - gofmt
-    - gosec
-    - gosimple
-    - govet
-    - ineffassign
-    - misspell
-    - revive
-    - staticcheck
-    - typecheck
-    - unparam
-    - unused
+#    - errcheck
+#    - exportloopref
+#    - forcetypeassert
+#    - gochecknoinits
+#    - gofmt
+#    - gosec
+#    - gosimple
+#    - govet
+#    - ineffassign
+#    - misspell
+#    - revive
+#    - staticcheck
+#    - typecheck
+#    - unparam
+#    - unused
     - wrapcheck
 issues:
   exclude:

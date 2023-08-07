@@ -37,6 +37,8 @@ type operatingSystem struct {
 	ext  string
 }
 
+var errIstioCtl = errors.New("error during istio installation")
+
 var windows = operatingSystem{"windows", "win"}
 var darwin = operatingSystem{"darwin", "osx"}
 var linux = operatingSystem{"linux", "linux"}
@@ -288,11 +290,11 @@ func (i *Installation) downloadFile(filepath string, filename string, url string
 	// Create path and file
 	err = os.MkdirAll(filepath, 0700)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errIstioCtl, err)
 	}
 	out, err := os.Create(path.Join(filepath, filename))
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errIstioCtl, err)
 	}
 	defer out.Close()
 
@@ -317,7 +319,7 @@ func unGzip(source, target string, deleteSource bool) error {
 	target = filepath.Join(target, archive.Name)
 	writer, err := os.Create(target)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errIstioCtl, err)
 	}
 	defer writer.Close()
 
@@ -346,7 +348,7 @@ func unTar(source, target string, deleteSource bool) error {
 		if err == io.EOF || err == io.ErrUnexpectedEOF {
 			break
 		} else if err != nil {
-			return err
+			return fmt.Errorf("%w: %w", errIstioCtl, err)
 		}
 
 		headerPath := fmt.Sprintf("%s/%s", target, header.Name)
@@ -361,7 +363,7 @@ func unTar(source, target string, deleteSource bool) error {
 		err = func() error {
 			file, err := os.OpenFile(headerPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode())
 			if err != nil {
-				return err
+				return fmt.Errorf("%w: %w", errIstioCtl, err)
 			}
 			defer file.Close()
 			err = copyInChunks(file, tarReader)
@@ -376,7 +378,7 @@ func unTar(source, target string, deleteSource bool) error {
 	}
 	if deleteSource {
 		if err := os.Remove(source); err != nil {
-			return err
+			return fmt.Errorf("%w: %w", errIstioCtl, err)
 		}
 	}
 	return nil
@@ -397,24 +399,24 @@ func unZip(source, target string, deleteSource bool) error {
 		if f.FileInfo().IsDir() {
 			err := os.MkdirAll(filePath, os.ModePerm)
 			if err != nil {
-				return err
+				return fmt.Errorf("%w: %w", errIstioCtl, err)
 			}
 			continue
 		}
 
 		if err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm); err != nil {
-			return err
+			return fmt.Errorf("%w: %w", errIstioCtl, err)
 		}
 
 		dstFile, err := os.OpenFile(filepath.Clean(filePath), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
 		if err != nil {
-			return err
+			return fmt.Errorf("%w: %w", errIstioCtl, err)
 		}
 		defer dstFile.Close()
 
 		fileInArchive, err := f.Open()
 		if err != nil {
-			return err
+			return fmt.Errorf("%w: %w", errIstioCtl, err)
 		}
 		defer fileInArchive.Close()
 
@@ -425,7 +427,7 @@ func unZip(source, target string, deleteSource bool) error {
 	}
 	if deleteSource {
 		if err := os.Remove(source); err != nil {
-			return err
+			return fmt.Errorf("%w: %w", errIstioCtl, err)
 		}
 	}
 	return nil
@@ -438,7 +440,7 @@ func copyInChunks(dstFile *os.File, srcFile io.Reader) error {
 			if err == io.EOF {
 				break
 			}
-			return err
+			return fmt.Errorf("%w: %w", errIstioCtl, err)
 		}
 	}
 	return nil
@@ -464,13 +466,13 @@ func initReader(source string) (*zip.Reader, error) {
 	buff := bytes.NewBuffer([]byte{})
 	size, err := io.Copy(buff, ioReader)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errIstioCtl, err)
 	}
 
 	reader := bytes.NewReader(buff.Bytes())
 	zipReader, err := zip.NewReader(reader, size)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errIstioCtl, err)
 	}
 	return zipReader, nil
 }

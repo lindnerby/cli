@@ -24,6 +24,8 @@ const (
 	Issuer        = "kyma-cli"
 )
 
+var errSigning = errors.New("module signing error")
+
 func Sign(cfg *ComponentSignConfig, remote *Remote) error {
 	if err := cfg.validate(); err != nil {
 		return err
@@ -36,7 +38,7 @@ func Sign(cfg *ComponentSignConfig, remote *Remote) error {
 
 	cva, err := repo.LookupComponentVersion(cfg.Name, cfg.Version)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errSigning, err)
 	}
 
 	signReg := signing.DefaultRegistry()
@@ -60,10 +62,14 @@ func Sign(cfg *ComponentSignConfig, remote *Remote) error {
 		signReg.GetHasher(sha512.Algorithm),
 		SignatureName, Issuer,
 	); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errSigning, err)
 	}
 
-	return cva.Close()
+	err = cva.Close()
+	if err != nil {
+		return fmt.Errorf("failed to close file stream: %w", err)
+	}
+	return nil
 }
 
 func Verify(cfg *ComponentSignConfig, remote *Remote) error {
@@ -73,12 +79,12 @@ func Verify(cfg *ComponentSignConfig, remote *Remote) error {
 
 	repo, err := remote.GetRepository(cpi.DefaultContext())
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errSigning, err)
 	}
 
 	cva, err := repo.LookupComponentVersion(cfg.Name, cfg.Version)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errSigning, err)
 	}
 
 	signReg := signing.DefaultRegistry()
@@ -90,7 +96,11 @@ func Verify(cfg *ComponentSignConfig, remote *Remote) error {
 
 	signReg.RegisterPublicKey(SignatureName, key)
 
-	return compdesc.Verify(cva.GetDescriptor(), signReg, SignatureName)
+	err = compdesc.Verify(cva.GetDescriptor(), signReg, SignatureName)
+	if err != nil {
+		return fmt.Errorf("%w: %w", errSigning, err)
+	}
+	return nil
 }
 
 func (cfg *ComponentSignConfig) validate() error {

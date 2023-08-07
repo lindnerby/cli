@@ -1,6 +1,7 @@
 package vscode
 
 import (
+	"fmt"
 	"path"
 
 	serverlessw "github.com/kyma-project/cli/pkg/serverless"
@@ -16,7 +17,7 @@ func (s Configuration) Build(dirPath string) error {
 func (s Configuration) build(dirPath string, writerProvider workspace.WriterProvider) error {
 	for file, cfg := range s {
 		if err := writerProvider.Write(dirPath, file, cfg); err != nil {
-			return err
+			return fmt.Errorf("failed to write file: %w", err)
 		}
 	}
 

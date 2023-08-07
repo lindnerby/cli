@@ -14,6 +14,7 @@ import (
 )
 
 var ErrFailedToParseImageURL = errors.New("error parsing protecode image URL")
+var errSecurityScan = errors.New("security")
 
 const (
 	secScanLabelKey = "scan.security.kyma-project.io"
@@ -43,7 +44,7 @@ func AddSecurityScanningMetadata(descriptor *ocm.ComponentDescriptor, securityCo
 	//add whitesource sec scan labels
 	for srcIdx := range descriptor.Sources {
 		src := &descriptor.Sources[srcIdx]
-		err := appendLabelToAccessor(src, "language", config.WhiteSource.Language, labelTemplate)
+		err = appendLabelToAccessor(src, "language", config.WhiteSource.Language, labelTemplate)
 		if err != nil {
 			return err
 		}
@@ -62,7 +63,12 @@ func AddSecurityScanningMetadata(descriptor *ocm.ComponentDescriptor, securityCo
 	}
 
 	ocm.DefaultResources(descriptor)
-	return ocm.Validate(descriptor)
+
+	err = ocm.Validate(descriptor)
+	if err != nil {
+		return fmt.Errorf("failed to validate OCM descriptor: %w", err)
+	}
+	return nil
 }
 
 func appendProtecodeImagesLayers(descriptor *ocm.ComponentDescriptor, config *SecurityScanCfg) error {
@@ -97,7 +103,11 @@ func appendProtecodeImagesLayers(descriptor *ocm.ComponentDescriptor, config *Se
 }
 
 func generateOCMLabel(key, value, tpl string) (*ocmv1.Label, error) {
-	return ocmv1.NewLabel(fmt.Sprintf(tpl, key), value, ocmv1.WithVersion("v1"))
+	lbl, err := ocmv1.NewLabel(fmt.Sprintf(tpl, key), value, ocmv1.WithVersion("v1"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create OCM label: %w", err)
+	}
+	return lbl, nil
 }
 
 func getImageName(imageURL string) (string, string, error) {
@@ -127,11 +137,11 @@ type WhiteSourceSecCfg struct {
 func parseSecurityScanConfig(securityConfigPath string) (*SecurityScanCfg, error) {
 	fileBytes, err := os.ReadFile(securityConfigPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read security scan config file: %w", err)
 	}
 	secCfg := &SecurityScanCfg{}
 	if err := yaml.Unmarshal(fileBytes, secCfg); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to unmarshal security scan config from yaml: %w", err)
 	}
 	return secCfg, nil
 }

@@ -45,12 +45,12 @@ func Template(remote ocm.ComponentVersionAccess, moduleTemplateName, channel str
 	descriptor := remote.GetDescriptor()
 	ref, err := oci.ParseRef(descriptor.Name)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parser OCI reference from descriptor name %s: %w", descriptor.Name, err)
 	}
 
 	cva, err := compdesc.Convert(descriptor)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to convert descripter during template creation: %w", err)
 	}
 
 	shortName := ref.ShortName()
@@ -77,7 +77,7 @@ func Template(remote ocm.ComponentVersionAccess, moduleTemplateName, channel str
 
 	t, err := template.New("modTemplate").Funcs(template.FuncMap{"yaml": yaml.Marshal, "indent": Indent}).Parse(modTemplate)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse module template: %w", err)
 	}
 
 	w := &bytes.Buffer{}

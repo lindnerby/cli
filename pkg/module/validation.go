@@ -20,6 +20,7 @@ import (
 )
 
 var ErrEmptyCR = errors.New("provided CR is empty")
+var errModuleValidation = errors.New("module validation error")
 
 type DefaultCRValidator struct {
 	crdSearchDir string
@@ -47,7 +48,7 @@ func (v *DefaultCRValidator) Run(ctx context.Context, log *zap.SugaredLogger) er
 
 	group, kind, err := readGroupKind(crMap)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errModuleValidation, err)
 	}
 
 	// find the file containing the CRD for given group and kind
@@ -66,7 +67,7 @@ func runTestEnv(ctx context.Context, log *zap.SugaredLogger, crdFilePath string,
 	// setup test env
 	runner, err := setup.EnvTest()
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errModuleValidation, err)
 	}
 
 	err = ensureDefaultNamespace(crMap)
@@ -76,11 +77,11 @@ func runTestEnv(ctx context.Context, log *zap.SugaredLogger, crdFilePath string,
 
 	properCR, err := renderYamlFromMap(crMap)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errModuleValidation, err)
 	}
 
-	if err := runner.Start(crdFilePath, log); err != nil {
-		return err
+	if err = runner.Start(crdFilePath, log); err != nil {
+		return fmt.Errorf("%w: %w", errModuleValidation, err)
 	}
 	defer func() {
 		if err := runner.Stop(); err != nil {
@@ -90,12 +91,12 @@ func runTestEnv(ctx context.Context, log *zap.SugaredLogger, crdFilePath string,
 
 	kc, err := kube.NewFromRestConfigWithTimeout(runner.RestClient(), 30*time.Second)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errModuleValidation, err)
 	}
 
 	objs, err := kc.ParseManifest(properCR)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errModuleValidation, err)
 	}
 
 	if err := kc.Apply(ctx, false, objs...); err != nil {
@@ -260,7 +261,7 @@ func getCRDFromFile(group, kind, filePath string) ([]byte, error) {
 			err = yd.Decode(modelMap)
 			if err != nil {
 				//fail fast if it's not a proper YAML
-				return nil, err
+				return nil, fmt.Errorf("%w: %w", errModuleValidation, err)
 			}
 
 			//Ensure it's a CRD
@@ -294,7 +295,7 @@ func getCRDFromFile(group, kind, filePath string) ([]byte, error) {
 			if groupVal == group && kindVal == kind {
 				res, err := yaml.Marshal(modelMap)
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("%w: %w", errModuleValidation, err)
 				}
 				return res, nil
 			}
@@ -306,7 +307,7 @@ func getCRDFromFile(group, kind, filePath string) ([]byte, error) {
 		}
 
 		//We should never get here, because Decode() should return EOF once there's no more data to read.
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errModuleValidation, err)
 	}
 }
 
