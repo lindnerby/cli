@@ -50,11 +50,11 @@ func AddResources(
 	if registryCredSelector != "" {
 		selector, err := metav1.ParseToLabelSelector(registryCredSelector)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to parse to label selector: %w", err)
 		}
 		matchLabels, err = json.Marshal(selector.MatchLabels)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to json marshal selector match labels: %w", err)
 		}
 		descriptor.SetLabels([]ocmv1.Label{{
 			Name:  OCIRegistryCredLabel,
@@ -127,7 +127,7 @@ func generateResources(log *zap.SugaredLogger, version string, credLabel []byte,
 func addBlob(fs vfs.FileSystem, archive *comparch.ComponentArchive, resource *ResourceDescriptor) error {
 	access, err := blob.AccessForFileOrFolder(fs, resource.Input)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to access blob: %w", err)
 	}
 
 	blobAccess, err := archive.AddBlob(
@@ -135,10 +135,15 @@ func addBlob(fs vfs.FileSystem, archive *comparch.ComponentArchive, resource *Re
 		resource.Resource.Name, nil,
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to add to blob: %w", err)
 	}
 
-	return archive.SetResource(&resource.ResourceMeta, blobAccess)
+	err = archive.SetResource(&resource.ResourceMeta, blobAccess)
+	if err != nil {
+		return fmt.Errorf("failed to add resource meta to archive: %w", err)
+	}
+
+	return nil
 }
 
 func (rd ResourceDescriptor) String() string {
@@ -216,7 +221,7 @@ func InspectLegacy(def *Definition, customDefs []string, s step.Step, log *zap.S
 		return inspectCustom(def, layers, log)
 	}
 	// there is an error other than not exists
-	return err
+	return fmt.Errorf("failed to insect legacy definition: %w", err)
 }
 
 func inspectProject(def *Definition, p *kubebuilder.Project, layers []Layer, s step.Step) error {
@@ -231,7 +236,7 @@ func inspectProject(def *Definition, p *kubebuilder.Project, layers []Layer, s s
 	// generated raw manifest -> layer 1
 	renderedManifestPath, err := p.Build(def.Name)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to generate raw manifest: %w", err)
 	}
 
 	// config.yaml -> layer 2
@@ -251,7 +256,7 @@ func inspectProject(def *Definition, p *kubebuilder.Project, layers []Layer, s s
 		if def.DefaultCRPath == "" {
 			cr, err = p.DefaultCR(s)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to get default CR: %w", err)
 			}
 		} else {
 			cr, err = os.ReadFile(def.DefaultCRPath)

@@ -54,7 +54,7 @@ func CreateArchive(fs vfs.FileSystem, path string, def *Definition) (*comparch.C
 	cd.Metadata.ConfiguredVersion = def.SchemaVersion
 	builtByCLI, err := v1.NewLabel("kyma-project.io/built-by", "cli", v1.WithVersion("v1"))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create new label: %w", err)
 	}
 
 	if compatattr.Get(ctx) {
@@ -81,7 +81,7 @@ func CreateArchive(fs vfs.FileSystem, path string, def *Definition) (*comparch.C
 func addSources(ctx cpi.Context, cd *ocm.ComponentDescriptor, def *Definition) error {
 	src, err := git.Source(ctx, def.Source, def.Repo, def.Version)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read git sources from %s - %s: %w", def.Source, def.Repo, err)
 	}
 
 	if idx := cd.GetSourceIndex(&src.SourceMeta); idx < 0 {

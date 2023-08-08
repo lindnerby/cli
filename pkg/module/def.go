@@ -33,7 +33,7 @@ func (cfg *Definition) validate() error {
 
 	ref, err := oci.ParseRef(cfg.Name)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to parse OCI ref for name %s: %w", cfg.Name, err)
 	}
 
 	if err := ValidateName(ref.ShortName()); err != nil {

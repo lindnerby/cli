@@ -53,7 +53,7 @@ func (sum *Summary) PrintFailedComponentSummary(result *service.ReconciliationRe
 	fmt.Println()
 }
 
-func (sum *Summary) Print(t time.Duration) error {
+func (sum *Summary) Print(t time.Duration) {
 	nicePrint := Nice{
 		NonInteractive: sum.NonInteractive,
 	}
@@ -106,7 +106,4 @@ func (sum *Summary) Print(t time.Duration) error {
 	fmt.Printf("\nHappy ")
 	nicePrint.PrintKyma()
 	fmt.Printf("-ing! :)\n\n")
-
-	// TODO refactor function when old deploy goes away, no need to return an error
-	return nil
 }

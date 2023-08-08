@@ -25,7 +25,7 @@ var envtestVersionRegexp = regexp.MustCompile(`^(0|[1-9]\d{0,2})\.(0|[1-9]\d{0,2
 func EnvTest() (*envtest.Runner, error) {
 	p, err := files.KymaHome()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error when creating kyma home dir: %w", err)
 	}
 
 	//Install setup-envtest
@@ -89,7 +89,7 @@ func extractPath(envtestSetupMsg string) (string, error) {
 func parseEnvtestSetupMsg(envtestSetupMsg, rgxp, objName string) (string, error) {
 	r, err := regexp.Compile(rgxp)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("error when compiling regex: %w", err)
 	}
 	matches := r.FindStringSubmatch(envtestSetupMsg)
 	if len(matches) != 2 {

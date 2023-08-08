@@ -151,9 +151,11 @@ func (r *Remote) Push(archive *comparch.ComponentArchive, overwrite bool) (ocm.C
 		return nil, fmt.Errorf("could not finish component transfer: %w", err)
 	}
 
-	return repo.LookupComponentVersion(
-		archive.ComponentVersionAccess.GetName(), archive.ComponentVersionAccess.GetVersion(),
-	)
+	access, err := repo.LookupComponentVersion(archive.ComponentVersionAccess.GetName(), archive.ComponentVersionAccess.GetVersion())
+	if err != nil {
+		return nil, fmt.Errorf("failed to lookup version from repo: %w", err)
+	}
+	return access, nil
 }
 
 type customTransferHandler struct {
@@ -161,5 +163,9 @@ type customTransferHandler struct {
 }
 
 func (h *customTransferHandler) TransferVersion(repo ocm.Repository, src ocm.ComponentVersionAccess, meta *compdesc.ComponentReference) (ocm.ComponentVersionAccess, transferhandler.TransferHandler, error) {
-	return h.TransferHandler.TransferVersion(repo, src, meta)
+	access, handler, err := h.TransferHandler.TransferVersion(repo, src, meta)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to transfer version: %w", err)
+	}
+	return access, handler, nil
 }

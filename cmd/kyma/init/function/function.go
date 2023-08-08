@@ -160,7 +160,7 @@ func validateVsCodeDir(vsCodeDir string) error {
 		}
 
 		if !os.IsNotExist(err) {
-			return err
+			return fmt.Errorf("failed to validate VSCode dir: %w", err)
 		}
 	}
 

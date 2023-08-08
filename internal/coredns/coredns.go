@@ -64,7 +64,7 @@ func Patch(logger *zap.Logger, kubeClient kubernetes.Interface, hasCustomDomain 
 				logger.Info("CoreDNS not found, skipping CoreDNS config patch")
 				return nil
 			}
-			return err
+			return fmt.Errorf("error when getting coredns deployment: %w", err)
 		}
 
 		// patches contain each key and value that needs to be patched in the coredns configmap data field.
@@ -90,7 +90,7 @@ func doPatch(logger *zap.Logger, kubeClient kubernetes.Interface, patches map[st
 		if apierr.IsNotFound(err) {
 			exists = false
 		} else {
-			return cm, err
+			return cm, fmt.Errorf("failed to get coredns ConfigMap: %w", err)
 		}
 	}
 
@@ -180,7 +180,6 @@ func generateCorefile(domainName string) (coreFile string, err error) {
 }
 
 func generateHosts(clusterName string, customHostsTemplate string) (string, error) {
-
 	registryIP, err := k3dRegistryIP(clusterName)
 	if err != nil {
 		return "", err
@@ -198,8 +197,8 @@ func generateHosts(clusterName string, customHostsTemplate string) (string, erro
 	}
 	t := template.Must(template.New("").Parse(hostsTemplate))
 	b := new(bytes.Buffer)
-	if err := t.Execute(b, patchVars); err != nil {
-		return "", err
+	if err = t.Execute(b, patchVars); err != nil {
+		return "", fmt.Errorf("failed to apply parsed template to object: %w", err)
 	}
 
 	return b.String(), nil
@@ -209,10 +208,19 @@ func generateHosts(clusterName string, customHostsTemplate string) (string, erro
 var defaultInspector = func(ctx context.Context, containerID string) (dockerTypes.ContainerJSON, error) {
 	client, err := docker.NewClientWithOpts(docker.FromEnv)
 	if err != nil {
-		return dockerTypes.ContainerJSON{}, err
+		return dockerTypes.ContainerJSON{}, fmt.Errorf("failed to create docker client: %w", err)
 	}
 
-	return client.ContainerInspect(context.Background(), containerID)
+	conInfo, err := client.ContainerInspect(context.Background(), containerID)
+	if err != nil {
+		return dockerTypes.ContainerJSON{}, fmt.Errorf(
+			"failed to get container information for id %s: %w",
+			containerID,
+			err,
+		)
+	}
+
+	return conInfo, nil
 }
 
 // registryIP uses docker inspect to find out the registry IP address in k3d

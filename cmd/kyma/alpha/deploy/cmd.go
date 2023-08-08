@@ -240,7 +240,8 @@ func (cmd *command) deploy(ctx context.Context) error {
 
 	if !hasKyma {
 		// skip applying Kyma CR and module templates
-		return cmd.printSummary(start)
+		cmd.printSummary(start)
+		return nil
 	}
 
 	if len(cmd.opts.AdditionalTemplates) > 0 {
@@ -253,24 +254,25 @@ func (cmd *command) deploy(ctx context.Context) error {
 	}
 
 	kymaStep := cmd.NewStep("Deploying Kyma CR")
-	if err := deploy.Kyma(
+	if err = deploy.Kyma(
 		ctx, cmd.K8s, cmd.opts.Namespace, cmd.opts.Channel, cmd.opts.KymaCR, cmd.opts.Force, false, isInKcpMode,
 	); err != nil {
 		kymaStep.Failuref("Failed to deploy Kyma CR: %s", err.Error())
-		return err
+		return fmt.Errorf("failed to deploy Kyma CR %s: %w", cmd.opts.KymaCR, err)
 	}
 	kymaStep.Successf("Kyma CR deployed and Ready!")
 
-	return cmd.printSummary(start)
+	cmd.printSummary(start)
+	return nil
 }
 
-func (cmd *command) printSummary(startTime time.Time) error {
+func (cmd *command) printSummary(startTime time.Time) {
 	deployTime := time.Since(startTime)
 	summary := &nice.Summary{
 		NonInteractive: cmd.NonInteractive,
 		Version:        "alpha deployment with lifecycle-manager",
 	}
-	return summary.Print(deployTime)
+	summary.Print(deployTime)
 }
 
 func (cmd *command) deployCertManager(ctx context.Context) {
@@ -296,7 +298,7 @@ func (cmd *command) deployCertManager(ctx context.Context) {
 func (cmd *command) dryRun(ctx context.Context, isInKcpMode bool) error {
 	if cmd.opts.CertManagerVersion != "" {
 		if err := deploy.CertManager(ctx, cmd.K8s, cmd.opts.CertManagerVersion, cmd.opts.Force, true); err != nil {
-			return err
+			return fmt.Errorf("failed to deploy cert manager: %w", err)
 		}
 	}
 
@@ -304,7 +306,7 @@ func (cmd *command) dryRun(ctx context.Context, isInKcpMode bool) error {
 		ctx, cmd.opts.Kustomizations, cmd.K8s, cmd.opts.Filters, cmd.opts.WildcardPermissions, cmd.opts.Force, true, isInKcpMode,
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("bootstrap failed: %w", err)
 	}
 
 	if !hasKyma {
@@ -312,8 +314,8 @@ func (cmd *command) dryRun(ctx context.Context, isInKcpMode bool) error {
 	}
 
 	if len(cmd.opts.AdditionalTemplates) > 0 {
-		if err := deploy.ModuleTemplates(ctx, cmd.K8s, cmd.opts.AdditionalTemplates, cmd.opts.Target, cmd.opts.Force, true); err != nil {
-			return err
+		if err = deploy.ModuleTemplates(ctx, cmd.K8s, cmd.opts.AdditionalTemplates, cmd.opts.Target, cmd.opts.Force, true); err != nil {
+			return fmt.Errorf("error deploying module templates: %w", err)
 		}
 	}
 
@@ -335,7 +337,7 @@ func (cmd *command) openDashboard(ctx context.Context) error {
 		},
 	).List(ctx, v1.ListOptions{})
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to list kymas when opening dashboard: %w", err)
 	}
 
 	if len(kymas.Items) < 1 {
@@ -350,7 +352,7 @@ func (cmd *command) openDashboard(ctx context.Context) error {
 	dash := dashboard.New("kyma-dashboard", "3001", cmd.KubeconfigPath, cmd.Verbose)
 	if err := dash.Start(); err != nil {
 		cmd.CurrentStep.Failure()
-		return err
+		return fmt.Errorf("failed to run dashboard container: %w", err)
 	}
 	// make sure the dashboard container always stops at the end and the cursor restored
 	cmd.Finalizers.Add(dash.StopFunc(ctx, func(i ...interface{}) { fmt.Print(i...) }))
@@ -361,7 +363,11 @@ func (cmd *command) openDashboard(ctx context.Context) error {
 	}
 	cmd.CurrentStep.Successf("Dashboard started. To exit press Ctrl+C")
 
-	return dash.Watch(ctx)
+	err = dash.Watch(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to forward docker container output: %w", err)
+	}
+	return nil
 }
 
 func (cmd *command) handleTimeoutErr(err error) error {

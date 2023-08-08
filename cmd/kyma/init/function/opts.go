@@ -1,6 +1,7 @@
 package function
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/kyma-project/cli/internal/cli"
@@ -36,14 +37,14 @@ func (o *Options) setDefaults(defaultNamespace string) (err error) {
 	if o.Dir == "" {
 		o.Dir, err = os.Getwd()
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to get root path when setting defaults: %w", err)
 		}
 	}
 
 	if o.Name == "" {
 		generated, err := generator.GenerateName(true)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to generate random name: %w", err)
 		}
 		o.Name = "function-" + generated
 	}

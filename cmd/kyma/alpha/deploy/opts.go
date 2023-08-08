@@ -70,7 +70,7 @@ func (o *Options) validateFilters() error {
 		},
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to validate filters: %w", err)
 	}
 	filters = append(filters, modifier)
 	o.Filters = filters

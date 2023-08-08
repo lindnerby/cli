@@ -19,15 +19,7 @@ linters:
 #    - typecheck
 #    - unparam
 #    - unused
-    - wrapcheck
+    - errorlint
 issues:
-  exclude:
-    # https://github.com/kyoh86/scopelint/issues/4
-    - Using the variable on range scope `tc` in function literal
-  exclude-rules:
-    - path: "_test\\.go"
-      linters:
-        - funlen
-        - wrapcheck
   max-issues-per-linter: 0
   max-same-issues: 0

@@ -127,7 +127,7 @@ func (cmd *command) run(ctx context.Context) error {
 
 	if !cmd.opts.NonInteractive {
 		if err := cli.DetectManagedEnvironment(ctx, cmd.K8s, cmd.Factory.NewStep("Detecting Environment")); err != nil {
-			return err
+			return fmt.Errorf("failed to detect managed environment: %w", err)
 		}
 	}
 
@@ -143,7 +143,7 @@ func (cmd *command) deploy(ctx context.Context, start time.Time) error {
 	l := cli.NewLogger(cmd.opts.Verbose).Sugar()
 	ws, err := deploy.PrepareWorkspace(cmd.opts.WorkspacePath, cmd.opts.Source, wsStep, !cmd.avoidUserInteraction(), cmd.opts.IsLocal(), l)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to prepare workspace: %w", err)
 	}
 
 	clusterInfo, err := clusterinfo.Discover(ctx, cmd.K8s.Static())
@@ -153,17 +153,17 @@ func (cmd *command) deploy(ctx context.Context, start time.Time) error {
 
 	vals, err := values.Merge(cmd.opts.Sources, ws.WorkspaceDir, clusterInfo)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to merge values: %w", err)
 	}
 
 	hasCustomDomain := cmd.opts.Domain != ""
 	if _, err := coredns.Patch(l.Desugar(), cmd.K8s.Static(), hasCustomDomain, clusterInfo, ""); err != nil {
-		return err
+		return fmt.Errorf("failed to patch coredns: %w", err)
 	}
 
 	components, err := component.Resolve(cmd.opts.Components, cmd.opts.ComponentsFile, ws)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to resolve components: %w", err)
 	}
 
 	err = cmd.initialSetup(ws.WorkspaceDir, l)
@@ -180,24 +180,27 @@ func (cmd *command) deploy(ctx context.Context, start time.Time) error {
 	}
 
 	deployTime := time.Since(start)
-	return summary.Print(deployTime)
+	summary.Print(deployTime)
+	return nil
 }
+
+var errDryRun = errors.New("dry-run failed")
 
 func (cmd *command) dryRun() error {
 	l := cli.NewLogger(cmd.opts.Verbose).Sugar()
 	ws, err := deploy.PrepareDryRunWorkspace(cmd.opts.WorkspacePath, cmd.opts.Source, cmd.opts.IsLocal(), l)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errDryRun, err)
 	}
 
 	vals, err := values.Merge(cmd.opts.Sources, ws.WorkspaceDir, clusterinfo.Unrecognized{})
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errDryRun, err)
 	}
 
 	components, err := component.Resolve(cmd.opts.Components, cmd.opts.ComponentsFile, ws)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errDryRun, err)
 	}
 
 	err = cmd.initialSetup(ws.WorkspaceDir, l)
@@ -221,7 +224,7 @@ func (cmd *command) dryRun() error {
 	})
 	if err != nil {
 		fmt.Printf("failed to generate Kyma manifests")
-		return err
+		return fmt.Errorf("%w: %w", errDryRun, err)
 	}
 	return nil
 }
@@ -258,7 +261,7 @@ func (cmd *command) deployKyma(l *zap.SugaredLogger, components component.List, 
 	})
 	if err != nil {
 		deployStep.Failuref("Failed to deploy Kyma.")
-		return err
+		return fmt.Errorf("kyma deployment failed: %w", err)
 	}
 
 	if recoResult.GetResult() == model.ClusterStatusReconcileError {
@@ -360,6 +363,8 @@ func (cmd *command) decideVersionUpgrade() error {
 	return nil
 }
 
+var errInitIstio = errors.New("failed to initialize istio install")
+
 func (cmd *command) initialSetup(wsp string, logger *zap.SugaredLogger) error {
 	var preReqStep step.Step
 	if !cmd.opts.DryRun {
@@ -368,11 +373,11 @@ func (cmd *command) initialSetup(wsp string, logger *zap.SugaredLogger) error {
 
 	istio, err := istioctl.New(wsp, logger)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errInitIstio, err)
 	}
 	err = istio.Install()
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errInitIstio, err)
 	}
 
 	if !cmd.opts.DryRun {

@@ -3,6 +3,7 @@ package hosts
 import (
 	"bufio"
 	"context"
+	"github.com/pkg/errors"
 	"os"
 	"strings"
 
@@ -15,19 +16,7 @@ const (
 	localDevDomain = "local.kyma.dev"
 )
 
-func GetVirtualServiceHostnames(kymaKube kube.KymaKube) ([]string, error) {
-	vsList, err := kymaKube.Istio().NetworkingV1alpha3().VirtualServices("").List(context.Background(), metav1.ListOptions{})
-	if err != nil {
-		return nil, err
-	}
-
-	hostnames := []string{}
-	for _, v := range vsList.Items {
-		hostnames = append(hostnames, v.Spec.Hosts...)
-	}
-
-	return hostnames, nil
-}
+var errHostsWrite = errors.New("error writing domain to hosts")
 
 func AddDevDomainsToEtcHostsKyma2(s step.Step, kymaKube kube.KymaKube) error {
 	hostnames := ""

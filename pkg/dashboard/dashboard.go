@@ -37,7 +37,7 @@ func New(name, port, kubeconfigPath string, verbose bool) *Container {
 	}
 }
 
-// Start runs the dashboard conrainer.
+// Start runs the dashboard container.
 func (c *Container) Start() error {
 	var err error
 	if c.docker, err = docker.NewWrapper(); err != nil {
